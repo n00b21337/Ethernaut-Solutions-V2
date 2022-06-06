@@ -1,6 +1,6 @@
 # Ethernaut solution
 ## 0. Hello Ethernaut
-The goal of this level is to familiarise yourself with how to interact with the current instance through the developer console. You should definitely go through this level yourself 🙂 hint: type await contract.info(). If you reaaaaaaaally need another hint, await contract.password(). Ok that's about all the hints I'm going to give you.
+The goal of this level is to familiarise yourself with how to interact with the current instance through the developer console. You should definitely go through this level yourself 🙂 hint: type await contract.info(). If you reaaaaaaally need another hint, await contract.password(). Ok that's about all the hints I'm going to give you.
 
 ## 1. Fallback
 The goal of this level is to become the owner and to reduce the balance of the contract to 0.
