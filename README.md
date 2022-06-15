@@ -114,7 +114,7 @@ await contract.unlock(password);
 ```
 
 ## 9. King
-This is a classic example of DDoS with unexpected revert when the logic of the victim's contract involve sending funds to  in the victim's contract involves transferring ether to the previous "lead", which in this case is the king. A malicious user would create a smart contract with either:
+This is a classic example of DDoS with unexpected revert when the logic of the victim's contract involve sending funds to the previous "lead", which in this case is the king. A malicious user would create a smart contract with either:
 
 - a `fallback` / `receive` function that does `revert()`
 - or the absence of a `fallback` / `receive` function
