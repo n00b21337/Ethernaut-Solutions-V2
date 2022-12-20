@@ -11,7 +11,7 @@ Thereafter we will initiate a plain ETH transfer into the contract to become the
 
 ```
 await contract.contribute({value: 1337});
-await contract.send({value: 1337});
+await contract.send(1337)
 await contract.withdraw();
 ```
 
