@@ -31,6 +31,7 @@ The goal of this level is to guess result of `side` correctly 10 times in a row.
 pragma solidity ^0.8.0;
 
 contract AttackCoinflip {
+    // Victim is address of smart contract you get instance of in Ethernauts.
     address victim = 0x12048e11FE4a4719Afd46664db4475db1AAa0bC7;
     uint256 FACTOR = 57896044618658097711785492504343953926634992332820282019728792003956564819968;
 
